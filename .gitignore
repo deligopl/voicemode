@@ -118,3 +118,6 @@ models/
 # Coverage reports (duplicates removed - already in Python section)
 coverage.xml
 voicemode-install-feedback.md
+
+# Generated LiveKit HTML (contains tokens - use generate_livekit_html.py)
+voice.html

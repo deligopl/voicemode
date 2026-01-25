@@ -1,19 +1,67 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>VoiceMode LiveKit Test</title>
+    <title>VoiceMode LiveKit</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.js"></script>
     <style>
-        body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
-        button { padding: 15px 30px; font-size: 18px; margin: 10px; cursor: pointer; }
-        #status { padding: 20px; background: #f0f0f0; border-radius: 8px; margin: 20px 0; }
-        .connected { background: #d4edda !important; }
-        .error { background: #f8d7da !important; }
-        #log { font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+        body {
+            font-family: -apple-system, sans-serif;
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 { color: #00d4ff; }
+        button {
+            padding: 15px 30px;
+            font-size: 18px;
+            margin: 10px;
+            cursor: pointer;
+            border: none;
+            border-radius: 8px;
+            background: #00d4ff;
+            color: #1a1a2e;
+            font-weight: bold;
+        }
+        button:disabled {
+            background: #444;
+            color: #888;
+            cursor: not-allowed;
+        }
+        #status {
+            padding: 20px;
+            background: #2a2a4e;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #00d4ff;
+        }
+        .connected { border-left-color: #00ff88 !important; }
+        .error { border-left-color: #ff4444 !important; }
+        #log {
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            background: #0a0a1e;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .info {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
-    <h1>VoiceMode LiveKit Test</h1>
+    <h1>VoiceMode</h1>
+    <div class="info">
+        Server: {{LIVEKIT_WS_URL}} | Room: {{LIVEKIT_ROOM}}<br>
+        Generated: {{GENERATED_DATE}} | Token expires: {{TOKEN_EXPIRY}}
+    </div>
 
     <div id="status">Status: Not connected</div>
 
@@ -25,17 +73,8 @@
     <div id="log"></div>
 
     <script>
-        // Configure these for your LiveKit server
-        // Option 1: Local development (via cloudflared or direct)
-        // const SERVER_URL = 'wss://your-livekit-domain.example.com';
-        // Option 2: Local network
-        // const SERVER_URL = 'ws://YOUR_MAC_IP:7880';
-        const SERVER_URL = 'wss://livekit.example.com';  // CHANGE THIS
-
-        // Generate token using: voicemode livekit-remote token --identity iphone-user
-        // Or use LiveKit CLI: lk token create --api-key devkey --api-secret secret \
-        //   --identity iphone-user --join --room voicemode --valid-for 24h
-        const TOKEN = 'YOUR_TOKEN_HERE';  // CHANGE THIS
+        const SERVER_URL = '{{LIVEKIT_WS_URL}}';
+        const TOKEN = '{{LIVEKIT_TOKEN}}';
 
         let room = null;
 
@@ -89,8 +128,6 @@
                 });
 
                 await room.connect(SERVER_URL, TOKEN);
-
-                // Don't auto-enable microphone - might fail on insecure origin
                 log('Connected! Click "Enable Mic" to start audio.');
 
             } catch (err) {
