@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VoiceMode LiveKit Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.js"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
+        button { padding: 15px 30px; font-size: 18px; margin: 10px; cursor: pointer; }
+        #status { padding: 20px; background: #f0f0f0; border-radius: 8px; margin: 20px 0; }
+        .connected { background: #d4edda !important; }
+        .error { background: #f8d7da !important; }
+        #log { font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>VoiceMode LiveKit Test</h1>
+
+    <div id="status">Status: Not connected</div>
+
+    <button id="connectBtn" onclick="connect()">Connect</button>
+    <button id="micBtn" onclick="enableMic()" disabled>Enable Mic</button>
+    <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+
+    <h3>Log:</h3>
+    <div id="log"></div>
+
+    <script>
+        // Configure these for your LiveKit server
+        // Option 1: Local development (via cloudflared or direct)
+        // const SERVER_URL = 'wss://your-livekit-domain.example.com';
+        // Option 2: Local network
+        // const SERVER_URL = 'ws://YOUR_MAC_IP:7880';
+        const SERVER_URL = 'wss://livekit.example.com';  // CHANGE THIS
+
+        // Generate token using: voicemode livekit-remote token --identity iphone-user
+        // Or use LiveKit CLI: lk token create --api-key devkey --api-secret secret \
+        //   --identity iphone-user --join --room voicemode --valid-for 24h
+        const TOKEN = 'YOUR_TOKEN_HERE';  // CHANGE THIS
+
+        let room = null;
+
+        function log(msg) {
+            const logEl = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            logEl.textContent += `[${time}] ${msg}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(msg);
+        }
+
+        function setStatus(msg, type) {
+            const el = document.getElementById('status');
+            el.textContent = 'Status: ' + msg;
+            el.className = type || '';
+        }
+
+        async function connect() {
+            try {
+                log('Connecting to ' + SERVER_URL);
+                setStatus('Connecting...');
+
+                room = new LivekitClient.Room();
+
+                room.on(LivekitClient.RoomEvent.Connected, () => {
+                    log('Connected to room!');
+                    setStatus('Connected', 'connected');
+                    document.getElementById('connectBtn').disabled = true;
+                    document.getElementById('micBtn').disabled = false;
+                    document.getElementById('disconnectBtn').disabled = false;
+                });
+
+                room.on(LivekitClient.RoomEvent.Disconnected, () => {
+                    log('Disconnected from room');
+                    setStatus('Disconnected');
+                    document.getElementById('connectBtn').disabled = false;
+                    document.getElementById('micBtn').disabled = true;
+                    document.getElementById('disconnectBtn').disabled = true;
+                });
+
+                room.on(LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
+                    log('Participant joined: ' + participant.identity);
+                });
+
+                room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+                    log('Track subscribed: ' + track.kind + ' from ' + participant.identity);
+                    if (track.kind === 'audio') {
+                        const el = track.attach();
+                        document.body.appendChild(el);
+                    }
+                });
+
+                await room.connect(SERVER_URL, TOKEN);
+
+                // Don't auto-enable microphone - might fail on insecure origin
+                log('Connected! Click "Enable Mic" to start audio.');
+
+            } catch (err) {
+                log('Error: ' + err.message);
+                setStatus('Error: ' + err.message, 'error');
+                console.error(err);
+            }
+        }
+
+        async function disconnect() {
+            if (room) {
+                await room.disconnect();
+                room = null;
+            }
+        }
+
+        async function enableMic() {
+            if (!room) {
+                log('Not connected');
+                return;
+            }
+            try {
+                log('Enabling microphone...');
+                await room.localParticipant.setMicrophoneEnabled(true);
+                log('Microphone enabled!');
+                document.getElementById('micBtn').disabled = true;
+            } catch (err) {
+                log('Mic error: ' + err.message);
+                setStatus('Mic error (needs HTTPS?)', 'error');
+            }
+        }
+    </script>
+</body>
+</html>

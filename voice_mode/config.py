@@ -629,11 +629,16 @@ KOKORO_DEFAULT_VOICE = os.getenv("VOICEMODE_KOKORO_DEFAULT_VOICE", "af_sky")
 
 # ==================== LIVEKIT CONFIGURATION ====================
 
+# Audio transport: "local" (sounddevice) or "livekit" (remote via WebRTC)
+# Use "livekit" when you want to speak/listen from a remote device (e.g., iPhone)
+AUDIO_TRANSPORT = os.getenv("VOICEMODE_AUDIO_TRANSPORT", "local").lower()
+
 # LiveKit-specific configuration
 LIVEKIT_PORT = int(os.getenv("VOICEMODE_LIVEKIT_PORT", "7880"))
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", f"ws://localhost:{LIVEKIT_PORT}")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "devkey")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret")
+LIVEKIT_ROOM = os.getenv("VOICEMODE_LIVEKIT_ROOM", "voicemode")
 
 # LiveKit Frontend configuration
 FRONTEND_HOST = os.getenv("VOICEMODE_FRONTEND_HOST", "127.0.0.1")

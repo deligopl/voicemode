@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+#
+# voicemode-voice-approval - Voice approval hook for Claude Code permission prompts
+#
+# This script is called by the Notification hook when Claude Code asks for permission.
+# It uses VoiceMode to ask the user via voice and sends the response to tmux.
+#
+# Usage:
+#   # Called by Claude Code Notification hook (reads JSON from stdin)
+#   echo '{"notification_type":"permission_prompt","message":"Run command?"}' | voicemode-voice-approval
+#
+# Configuration:
+#   VOICEMODE_VOICE_APPROVAL_ENABLED - Set to 'true' to enable (default: false)
+#   VOICEMODE_VOICE_APPROVAL_TMUX - tmux session name (default: auto-detect)
+#   VOICEMODE_VOICE_APPROVAL_LIVEKIT - Set to 'true' to use LiveKit (default: false)
+#
+set -o nounset -o pipefail
+
+# Check if voice approval is enabled
+VOICE_APPROVAL_ENABLED="${VOICEMODE_VOICE_APPROVAL_ENABLED:-false}"
+if [[ "$VOICE_APPROVAL_ENABLED" != "true" && "$VOICE_APPROVAL_ENABLED" != "1" ]]; then
+    exit 0
+fi
+
+# Read JSON from stdin
+if [[ -t 0 ]]; then
+    echo "Error: No JSON input provided" >&2
+    exit 1
+fi
+
+JSON_INPUT=$(cat)
+
+# Check if this is a permission prompt
+if command -v jq &>/dev/null; then
+    NOTIFICATION_TYPE=$(echo "$JSON_INPUT" | jq -r '.notification_type // ""')
+else
+    NOTIFICATION_TYPE=$(echo "$JSON_INPUT" | grep -o '"notification_type"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*:.*"\([^"]*\)"/\1/' || echo "")
+fi
+
+if [[ "$NOTIFICATION_TYPE" != "permission_prompt" ]]; then
+    exit 0
+fi
+
+# Determine tmux session
+TMUX_SESSION="${VOICEMODE_VOICE_APPROVAL_TMUX:-}"
+if [[ -z "$TMUX_SESSION" ]]; then
+    # Try to auto-detect from aoe first (Agent of Empires tmux wrapper)
+    if command -v aoe &>/dev/null; then
+        # aoe uses format: aoe_<title>_<id>
+        AOE_TITLE=$(aoe session current -q 2>/dev/null || echo "")
+        if [[ -n "$AOE_TITLE" ]]; then
+            # Get the full tmux session name
+            TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo "")
+        fi
+    fi
+
+    # Fallback: try to detect current tmux session directly
+    if [[ -z "$TMUX_SESSION" && -n "${TMUX:-}" ]]; then
+        TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo "")
+    fi
+fi
+
+if [[ -z "$TMUX_SESSION" ]]; then
+    echo "Warning: No tmux session detected, skipping voice approval" >&2
+    exit 0
+fi
+
+# Build voicemode command
+CMD="voicemode voice-approval --tmux-session '$TMUX_SESSION'"
+
+if [[ "${VOICEMODE_VOICE_APPROVAL_LIVEKIT:-false}" == "true" ]]; then
+    CMD="$CMD --livekit"
+fi
+
+# Run voice approval
+echo "$JSON_INPUT" | eval "$CMD"
