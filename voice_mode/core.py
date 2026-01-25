@@ -21,13 +21,18 @@ from openai import AsyncOpenAI
 from .provider_discovery import is_local_provider
 import httpx
 
-from .config import SAMPLE_RATE
+from .config import SAMPLE_RATE, AUDIO_TRANSPORT
 from .utils import (
     get_event_logger,
     log_tts_start,
     log_tts_first_audio
 )
 from .audio_player import NonBlockingAudioPlayer
+
+
+def is_remote_audio() -> bool:
+    """Check if using remote audio transport (LiveKit)."""
+    return AUDIO_TRANSPORT == "livekit"
 
 logger = logging.getLogger("voicemode")
 
@@ -419,10 +424,29 @@ async def text_to_speech(
                             silence = np.zeros((silence_samples, samples.shape[1]), dtype=np.float32)
                             samples_with_buffer = np.vstack([silence, samples])
 
-                        # Use non-blocking audio player for concurrent playback support
-                        player = NonBlockingAudioPlayer()
-                        player.play(samples_with_buffer, audio.frame_rate, blocking=False)
-                        player.wait()
+                        # Check if using remote audio (LiveKit)
+                        if is_remote_audio():
+                            # Send audio to remote client via LiveKit
+                            from .audio_transport import ensure_connected, AudioConfig
+
+                            # Convert float32 back to int16 for LiveKit
+                            samples_int16 = (samples_with_buffer * 32767).astype(np.int16)
+
+                            # LiveKit expects 24kHz, resample if needed
+                            if audio.frame_rate != SAMPLE_RATE:
+                                from scipy import signal
+                                num_samples = int(len(samples_int16) * SAMPLE_RATE / audio.frame_rate)
+                                samples_int16 = signal.resample(samples_int16, num_samples).astype(np.int16)
+
+                            config = AudioConfig(sample_rate=SAMPLE_RATE, channels=1)
+                            transport = asyncio.get_event_loop().run_until_complete(ensure_connected())
+                            asyncio.get_event_loop().run_until_complete(transport.play(samples_int16, config))
+                            logger.info("✓ TTS sent to LiveKit")
+                        else:
+                            # Use non-blocking audio player for local concurrent playback
+                            player = NonBlockingAudioPlayer()
+                            player.play(samples_with_buffer, audio.frame_rate, blocking=False)
+                            player.wait()
                         
                         playback_end = time.perf_counter()
                         metrics['playback'] = playback_end - playback_start

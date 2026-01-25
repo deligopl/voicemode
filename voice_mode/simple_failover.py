@@ -11,7 +11,7 @@ from openai import AsyncOpenAI
 from .openai_error_parser import OpenAIErrorParser
 from .provider_discovery import is_local_provider
 
-from .config import TTS_BASE_URLS, STT_BASE_URLS, OPENAI_API_KEY
+from .config import TTS_BASE_URLS, STT_BASE_URLS, OPENAI_API_KEY, PARAKEET_API_KEY
 from .provider_discovery import detect_provider_type
 
 logger = logging.getLogger("voicemode")
@@ -213,7 +213,13 @@ async def simple_stt_failover(
                 logger.warning(f"STT: Primary failed, attempting fallback #{i}: {base_url} ({provider_type})")
 
             # Create client for this endpoint
-            api_key = OPENAI_API_KEY if provider_type == "openai" else (OPENAI_API_KEY or "dummy-key-for-local")
+            # Use PARAKEET_API_KEY for local STT if configured, otherwise fall back to OPENAI_API_KEY
+            if provider_type == "openai":
+                api_key = OPENAI_API_KEY
+            elif is_local_provider(base_url) and PARAKEET_API_KEY:
+                api_key = PARAKEET_API_KEY
+            else:
+                api_key = OPENAI_API_KEY or "dummy-key-for-local"
 
             # Disable retries for local endpoints - they either work or don't
             max_retries = 0 if is_local_provider(base_url) else 2

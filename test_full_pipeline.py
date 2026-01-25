@@ -17,6 +17,7 @@ LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret")
 ROOM_NAME = os.getenv("VOICEMODE_LIVEKIT_ROOM", "voicemode")
 STT_URL = os.getenv("VOICEMODE_STT_URL", "http://127.0.0.1:2022/v1/audio/transcriptions")
 TTS_URL = os.getenv("VOICEMODE_TTS_URL", "http://127.0.0.1:8880/v1/audio/speech")
+PARAKEET_API_KEY = os.getenv("PARAKEET_API_KEY")
 SAMPLE_RATE = 48000
 
 
@@ -130,12 +131,18 @@ async def main():
     print("\n🎯 Sending to Parakeet STT...")
     stt_start = time.time()
 
+    # Build headers with API key if configured
+    headers = {}
+    if PARAKEET_API_KEY:
+        headers["Authorization"] = f"Bearer {PARAKEET_API_KEY}"
+
     async with httpx.AsyncClient() as client:
         with open(wav_path, 'rb') as f:
             response = await client.post(
                 STT_URL,
                 files={"file": ("audio.wav", f, "audio/wav")},
                 data={"model": "parakeet-tdt-0.6b-v3"},
+                headers=headers,
                 timeout=60.0
             )
 

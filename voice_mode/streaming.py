@@ -24,9 +24,15 @@ from .config import (
     STREAM_BUFFER_MS,
     STREAM_MAX_BUFFER,
     SAMPLE_RATE,
+    AUDIO_TRANSPORT,
     logger
 )
 from .utils import get_event_logger
+
+
+def is_remote_audio() -> bool:
+    """Check if using remote audio transport (LiveKit)."""
+    return AUDIO_TRANSPORT == "livekit"
 
 
 
@@ -252,31 +258,37 @@ async def stream_pcm_audio(
             if not audio_started and frames > 0:
                 audio_started = True
                 audio_start_time = time.perf_counter()
-        
-        stream = sd.OutputStream(
-            samplerate=SAMPLE_RATE,  # Standard TTS sample rate (24kHz)
-            channels=1,
-            dtype='int16'  # PCM is 16-bit integers
-            # Note: Can't use callback and write() together
-        )
-        stream.start()
-        
+
+        # Check if using remote audio (LiveKit)
+        using_livekit = is_remote_audio()
+        livekit_buffer = io.BytesIO() if using_livekit else None
+        stream = None
+
+        if not using_livekit:
+            stream = sd.OutputStream(
+                samplerate=SAMPLE_RATE,  # Standard TTS sample rate (24kHz)
+                channels=1,
+                dtype='int16'  # PCM is 16-bit integers
+                # Note: Can't use callback and write() together
+            )
+            stream.start()
+
         # Log TTS playback start when we start the stream
         event_logger = get_event_logger()
         if event_logger:
             event_logger.log_event(event_logger.TTS_PLAYBACK_START)
-        
+
         # Don't add stream parameter - Kokoro defaults to true, OpenAI doesn't support it
-        
-        logger.info("Starting true HTTP streaming with iter_bytes()")
-        
+
+        logger.info(f"Starting true HTTP streaming with iter_bytes() (livekit={using_livekit})")
+
         # Use the streaming response API
         async with openai_client.audio.speech.with_streaming_response.create(
             **request_params
         ) as response:
             chunk_count = 0
             bytes_received = 0
-            
+
             # Stream chunks as they arrive
             async for chunk in response.iter_bytes(chunk_size=STREAM_CHUNK_SIZE):
                 if chunk:
@@ -285,33 +297,47 @@ async def stream_pcm_audio(
                         first_chunk_time = time.perf_counter()
                         chunk_receive_time = first_chunk_time - start_time
                         logger.info(f"First audio chunk received after {chunk_receive_time:.3f}s")
-                        
+
                         # Log TTS first audio event
                         event_logger = get_event_logger()
                         if event_logger:
                             event_logger.log_event(event_logger.TTS_FIRST_AUDIO)
-                    
-                    # Convert bytes to numpy array for sounddevice
-                    # PCM data is already in the right format
-                    audio_array = np.frombuffer(chunk, dtype=np.int16)
-                    
-                    # Play the chunk immediately
-                    stream.write(audio_array)
-                    
+
+                    if using_livekit:
+                        # Accumulate for LiveKit (send all at once)
+                        livekit_buffer.write(chunk)
+                    else:
+                        # Convert bytes to numpy array for sounddevice
+                        # PCM data is already in the right format
+                        audio_array = np.frombuffer(chunk, dtype=np.int16)
+                        # Play the chunk immediately
+                        stream.write(audio_array)
+
                     # Save chunk if enabled
                     if save_buffer:
                         save_buffer.write(chunk)
-                    
+
                     chunk_count += 1
                     bytes_received += len(chunk)
                     metrics.chunks_received = chunk_count
                     metrics.chunks_played = chunk_count
-                    
+
                     if debug and chunk_count % 10 == 0:
                         logger.debug(f"Streamed {chunk_count} chunks, {bytes_received} bytes")
-        
-        # Wait for playback to finish
-        stream.stop()
+
+        # Finish playback
+        if using_livekit:
+            # Send accumulated audio to LiveKit
+            from .audio_transport import ensure_connected, AudioConfig
+
+            audio_data = np.frombuffer(livekit_buffer.getvalue(), dtype=np.int16)
+            config = AudioConfig(sample_rate=SAMPLE_RATE, channels=1)
+            transport = await ensure_connected()
+            await transport.play(audio_data, config)
+            logger.info("✓ TTS sent to LiveKit")
+        else:
+            # Wait for local playback to finish
+            stream.stop()
         
         end_time = time.perf_counter()
 
@@ -463,23 +489,27 @@ async def stream_with_buffering(
     audio_started = False
     stream = None
     
+    # Check if using remote audio (LiveKit)
+    using_livekit = is_remote_audio()
+
     try:
-        # Setup sounddevice stream
-        stream = sd.OutputStream(
-            samplerate=sample_rate,
-            channels=1,
-            dtype='float32'
-        )
-        stream.start()
-        
+        # Setup sounddevice stream (skip for LiveKit)
+        if not using_livekit:
+            stream = sd.OutputStream(
+                samplerate=sample_rate,
+                channels=1,
+                dtype='float32'
+            )
+            stream.start()
+
         # Don't add stream parameter - Kokoro defaults to true, OpenAI doesn't support it
-        
+
         # Use the streaming response API for true HTTP streaming
         async with openai_client.audio.speech.with_streaming_response.create(
             **request_params
         ) as response:
             first_chunk_time = None
-            
+
             # Stream chunks as they arrive
             async for chunk in response.iter_bytes(chunk_size=STREAM_CHUNK_SIZE):
                 if chunk:
@@ -488,51 +518,63 @@ async def stream_with_buffering(
                         first_chunk_time = time.perf_counter()
                         metrics.ttfa = first_chunk_time - start_time
                         logger.info(f"First chunk received - TTFA: {metrics.ttfa:.3f}s")
-                    
+
                     buffer.write(chunk)
                     metrics.chunks_received += 1
-                    
+
                     # Also accumulate in save buffer if saving is enabled
                     if save_buffer:
                         save_buffer.write(chunk)
-                    
-                    # Try to decode when we have enough data (e.g., 32KB)
-                    if buffer.tell() > 32768 and not audio_started:
+
+                    # Try to decode when we have enough data (e.g., 32KB) - skip for LiveKit
+                    if not using_livekit and buffer.tell() > 32768 and not audio_started:
                         buffer.seek(0)
                         try:
                             # Attempt to decode what we have
                             audio = AudioSegment.from_file(buffer, format=format)
                             samples = np.array(audio.get_array_of_samples()).astype(np.float32) / 32768.0
-                            
+
                             # Start playback
                             metrics.ttfa = time.perf_counter() - start_time
                             audio_started = True
                             logger.info(f"Buffered streaming started - TTFA: {metrics.ttfa:.3f}s")
-                            
+
                             # Play audio
                             stream.write(samples)
                             metrics.chunks_played += len(samples) // 1024
-                            
+
                             # Reset buffer for next batch
                             buffer = io.BytesIO()
-                            
+
                         except Exception as e:
                             # Not enough valid data yet
                             buffer.seek(0, io.SEEK_END)
-        
-        # Process any remaining data
+
+        # Process remaining data
         if buffer.tell() > 0:
             buffer.seek(0)
             try:
                 audio = AudioSegment.from_file(buffer, format=format)
                 samples = np.array(audio.get_array_of_samples()).astype(np.float32) / 32768.0
-                
+
                 if not audio_started:
                     metrics.ttfa = time.perf_counter() - start_time
-                    
-                stream.write(samples)
+
+                if using_livekit:
+                    # Send to LiveKit
+                    from .audio_transport import ensure_connected, AudioConfig
+
+                    # Convert float32 to int16 for LiveKit
+                    samples_int16 = (samples * 32767).astype(np.int16)
+                    config = AudioConfig(sample_rate=sample_rate, channels=1)
+                    transport = await ensure_connected()
+                    await transport.play(samples_int16, config)
+                    logger.info("✓ TTS sent to LiveKit")
+                else:
+                    stream.write(samples)
+
                 metrics.chunks_played += len(samples) // 1024
-                
+
             except Exception as e:
                 logger.error(f"Failed to decode final buffer: {e}")
         

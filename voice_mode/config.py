@@ -510,6 +510,9 @@ CONCH_LOCK_EXPIRY = float(os.getenv("VOICEMODE_CONCH_LOCK_EXPIRY", "300"))
 # OpenAI configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# Parakeet STT API key (for local Parakeet server with auth enabled)
+PARAKEET_API_KEY = os.getenv("PARAKEET_API_KEY")
+
 # Helper function to parse comma-separated lists
 def parse_comma_list(env_var: str, fallback: str) -> list:
     """Parse comma-separated list from environment variable."""
