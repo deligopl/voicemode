@@ -63,7 +63,8 @@ from voice_mode.config import (
     MP3_BITRATE,
     CONCH_ENABLED,
     CONCH_TIMEOUT,
-    CONCH_CHECK_INTERVAL
+    CONCH_CHECK_INTERVAL,
+    AUDIO_TRANSPORT,
 )
 import voice_mode.config
 from voice_mode.provider_discovery import provider_registry
@@ -91,7 +92,19 @@ from voice_mode.utils import (
 )
 from voice_mode.pronounce import get_manager as get_pronounce_manager, is_enabled as pronounce_enabled
 
+# Import audio transport for remote audio support (LiveKit)
+from voice_mode.audio_transport import (
+    get_audio_transport,
+    ensure_connected,
+    AudioConfig,
+)
+
 logger = logging.getLogger("voicemode")
+
+# Check if using remote audio transport
+def is_remote_audio() -> bool:
+    """Check if using remote audio transport (LiveKit)."""
+    return AUDIO_TRANSPORT == "livekit"
 
 # Log silence detection config at module load time
 logger.info(f"Module loaded with DISABLE_SILENCE_DETECTION={DISABLE_SILENCE_DETECTION}")
@@ -675,7 +688,32 @@ async def play_audio_feedback(
 
 
 def record_audio(duration: float) -> np.ndarray:
-    """Record audio from microphone"""
+    """Record audio from microphone (local or remote via LiveKit)"""
+    # Use remote audio transport if configured
+    if is_remote_audio():
+        logger.info(f"🎤 Recording audio via LiveKit for {duration}s...")
+        import asyncio
+        config = AudioConfig(sample_rate=SAMPLE_RATE, channels=CHANNELS, dtype=np.int16)
+
+        async def _record():
+            transport = await ensure_connected()
+            return await transport.record(duration, config)
+
+        # Run in event loop
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Already in async context, create task
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(asyncio.run, _record())
+                    return future.result()
+            else:
+                return loop.run_until_complete(_record())
+        except RuntimeError:
+            return asyncio.run(_record())
+
+    # Local audio recording via sounddevice
     logger.info(f"🎤 Recording audio for {duration}s...")
     if DEBUG:
         try:
@@ -685,17 +723,17 @@ def record_audio(duration: float) -> np.ndarray:
             logger.debug(f"Recording config - Sample rate: {SAMPLE_RATE}Hz, Channels: {CHANNELS}, dtype: int16")
         except Exception as dev_e:
             logger.error(f"Error querying audio devices: {dev_e}")
-    
+
     # Save current stdio state
     import sys
     original_stdin = sys.stdin
     original_stdout = sys.stdout
     original_stderr = sys.stderr
-    
+
     try:
         samples_to_record = int(duration * SAMPLE_RATE)
         logger.debug(f"Recording {samples_to_record} samples...")
-        
+
         recording = sd.rec(
             samples_to_record,
             samplerate=SAMPLE_RATE,
@@ -703,16 +741,16 @@ def record_audio(duration: float) -> np.ndarray:
             dtype=np.int16
         )
         sd.wait()
-        
+
         flattened = recording.flatten()
         logger.info(f"✓ Recorded {len(flattened)} samples")
-        
+
         if DEBUG:
             logger.debug(f"Recording stats - Min: {flattened.min()}, Max: {flattened.max()}, Mean: {flattened.mean():.2f}")
             # Check if recording contains actual audio (not silence)
             rms = np.sqrt(np.mean(flattened.astype(float) ** 2))
             logger.debug(f"RMS level: {rms:.2f} ({'likely silence' if rms < 100 else 'audio detected'})")
-        
+
         return flattened
         
     except Exception as e:
@@ -788,22 +826,64 @@ def record_audio(duration: float) -> np.ndarray:
 
 def record_audio_with_silence_detection(max_duration: float, disable_silence_detection: bool = False, min_duration: float = 0.0, vad_aggressiveness: Optional[int] = None) -> Tuple[np.ndarray, bool]:
     """Record audio from microphone with automatic silence detection.
-    
+
     Uses WebRTC VAD to detect when the user stops speaking and automatically
     stops recording after a configurable silence threshold.
-    
+
     Args:
         max_duration: Maximum recording duration in seconds
         disable_silence_detection: If True, disables silence detection and uses fixed duration recording
         min_duration: Minimum recording duration before silence detection can stop (default: 0.0)
         vad_aggressiveness: VAD aggressiveness level (0-3). If None, uses VAD_AGGRESSIVENESS from config
-        
+
     Returns:
         Tuple of (audio_data, speech_detected):
             - audio_data: Numpy array of recorded audio samples
             - speech_detected: Boolean indicating if speech was detected during recording
     """
-    
+
+    # Use remote audio transport if configured
+    if is_remote_audio():
+        logger.info(f"🎤 Recording via LiveKit with VAD (max {max_duration}s)...")
+        import asyncio
+        config = AudioConfig(sample_rate=SAMPLE_RATE, channels=CHANNELS, dtype=np.int16)
+
+        # Create VAD callback if available and not disabled
+        vad_callback = None
+        if VAD_AVAILABLE and not disable_silence_detection and not DISABLE_SILENCE_DETECTION:
+            effective_vad_aggressiveness = vad_aggressiveness if vad_aggressiveness is not None else VAD_AGGRESSIVENESS
+            vad = webrtcvad.Vad(effective_vad_aggressiveness)
+            # VAD expects 16kHz samples, so we'll need to resample in callback
+            def vad_callback(audio_bytes: bytes) -> bool:
+                try:
+                    # Simple check - VAD on raw bytes
+                    # Note: This assumes 16kHz, 16-bit mono which may need adjustment
+                    return vad.is_speech(audio_bytes[:960], 16000)  # 30ms at 16kHz
+                except Exception:
+                    return True  # Assume speech on error
+
+        async def _record_with_vad():
+            transport = await ensure_connected()
+            return await transport.record_with_vad(
+                max_duration=max_duration,
+                min_duration=min_duration,
+                config=config,
+                vad_callback=vad_callback,
+                silence_threshold_ms=SILENCE_THRESHOLD_MS
+            )
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(asyncio.run, _record_with_vad())
+                    return future.result()
+            else:
+                return loop.run_until_complete(_record_with_vad())
+        except RuntimeError:
+            return asyncio.run(_record_with_vad())
+
     logger.info(f"record_audio_with_silence_detection called - VAD_AVAILABLE={VAD_AVAILABLE}, DISABLE_SILENCE_DETECTION={DISABLE_SILENCE_DETECTION}, min_duration={min_duration}")
     
     if not VAD_AVAILABLE:

@@ -50,6 +50,7 @@ dependencies = [
 livekit = [
     "livekit>=0.13.1",
     "livekit-agents>=0.10.2",
+    "livekit-api>=1.0.5",
     "livekit-plugins-openai>=0.10.1",
     "livekit-plugins-silero>=0.6.5",
 ]
