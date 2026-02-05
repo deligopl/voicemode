@@ -28,12 +28,11 @@ INPUT=$(cat)
 echo "$(date): New permission request" >> /tmp/voice-permission-hook.log
 echo "$INPUT" >> /tmp/voice-permission-hook.log
 
-# Extract tool name and description
+# Extract tool name only - keep it short!
 TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name', 'unknown'))" 2>/dev/null || echo "unknown")
-TOOL_INPUT=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); ti=d.get('tool_input', {}); desc=ti.get('description', ti.get('command', '')); print(desc[:150] if desc else 'no description')" 2>/dev/null || echo "")
 
-# Create speech message (English for Kokoro)
-MESSAGE="Permission needed for ${TOOL_NAME}. ${TOOL_INPUT}. Press talk button and say yes to approve or no to deny."
+# Create SHORT speech message - just tool name, no details
+MESSAGE="Permission for ${TOOL_NAME}. Yes or no?"
 
 echo "Asking: $MESSAGE" >> /tmp/voice-permission-hook.log
 

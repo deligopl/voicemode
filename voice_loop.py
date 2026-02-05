@@ -166,6 +166,35 @@ async def transcribe(audio, rate=48000):
     return None
 
 
+async def play_beep(freq=800, duration_ms=100):
+    """Play a short beep sound to confirm message received."""
+    global audio_source
+
+    if not audio_source:
+        return
+
+    # Generate sine wave beep at 48kHz
+    sample_rate = 48000
+    num_samples = int(sample_rate * duration_ms / 1000)
+    t = np.linspace(0, duration_ms / 1000, num_samples, False)
+    beep = (np.sin(2 * np.pi * freq * t) * 8000).astype(np.int16)
+
+    # Fade in/out to avoid clicks
+    fade_samples = min(100, num_samples // 4)
+    beep[:fade_samples] = (beep[:fade_samples] * np.linspace(0, 1, fade_samples)).astype(np.int16)
+    beep[-fade_samples:] = (beep[-fade_samples:] * np.linspace(1, 0, fade_samples)).astype(np.int16)
+
+    # Send in 10ms chunks
+    chunk_size = 480
+    for i in range(0, len(beep), chunk_size):
+        chunk = beep[i:i+chunk_size]
+        if len(chunk) < chunk_size:
+            chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
+        frame = rtc.AudioFrame.create(48000, 1, len(chunk))
+        np.copyto(np.frombuffer(frame.data, dtype=np.int16), chunk)
+        await audio_source.capture_frame(frame)
+
+
 async def speak(text):
     """Speak text via TTS to iPhone."""
     global audio_source
@@ -227,9 +256,14 @@ def send_to_tmux(session: str, text: str) -> bool:
             print(f"tmux session '{session}' not found", file=sys.stderr)
             return False
 
-        # Send the text and Enter
+        # Send the text followed by Enter to submit
+        # Using -l for literal text, then Enter separately
         subprocess.run(
-            ["tmux", "send-keys", "-t", session, text, "Enter"],
+            ["tmux", "send-keys", "-t", session, "-l", text],
+            check=True
+        )
+        subprocess.run(
+            ["tmux", "send-keys", "-t", session, "Enter"],
             check=True
         )
         return True
@@ -268,6 +302,8 @@ async def voice_loop(tmux_session: str = None):
                 if tmux_session and not permission_active:
                     if send_to_tmux(tmux_session, text):
                         print(f"  → Sent to tmux", file=sys.stderr)
+                        # Play confirmation beep
+                        await play_beep(freq=880, duration_ms=80)
                 elif permission_active:
                     print(f"  → Skipped tmux (permission hook active)", file=sys.stderr)
 

@@ -341,7 +341,7 @@
         }
         .orchestrator-list {
             display: flex;
-            flex-wrap: wrap;
+            flex-direction: column;
             gap: 10px;
         }
         .orchestrator-item {
@@ -377,6 +377,35 @@
         .orchestrator-item .status-badge.connected {
             background: #00ff88;
             color: #000;
+        }
+        .orchestrator-item.selected {
+            border-color: #00d4ff;
+            background: #2a3a4e;
+        }
+        .orchestrator-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .orchestrator-details-inline {
+            background: #1a2a3e;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 10px;
+            border-left: 4px solid #00d4ff;
+            animation: slideDown 0.2s ease-out;
+        }
+        .orchestrator-details-inline p {
+            margin: 5px 0;
+            color: #aaa;
+            font-size: 13px;
+        }
+        .orchestrator-details-inline code {
+            background: #0a0a14;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
         }
     </style>
 </head>
@@ -438,6 +467,8 @@
         let currentFilter = 'all';
         let orchestrators = [];
         let connectedOrchestrator = null;
+        let selectedOrchestrator = null;
+        let orchestratorMessagesInterval = null;
 
         function log(msg, type = '') {
             const logEl = document.getElementById('log');
@@ -669,6 +700,8 @@
                             ${msg.tools ? `<div class="message-tools">Tools: ${msg.tools.join(', ')}</div>` : ''}
                         </div>
                     `).join('');
+                    // Auto-scroll to bottom
+                    messagesList.scrollTop = messagesList.scrollHeight;
                 } else {
                     messagesList.innerHTML = '<p style="color: #666;">No messages found (session file may not exist)</p>';
                 }
@@ -709,8 +742,27 @@ Tmux: ${selectedSession.tmux_name}`;
             try {
                 const resp = await fetch('/api/orchestrators');
                 const data = await resp.json();
-                orchestrators = data.orchestrators || [];
-                renderOrchestrators();
+                const newOrchestrators = data.orchestrators || [];
+
+                // Check if orchestrators actually changed
+                const newJson = JSON.stringify(newOrchestrators.map(o => ({id: o.id, status: o.status})));
+                const oldJson = JSON.stringify(orchestrators.map(o => ({id: o.id, status: o.status})));
+
+                if (newJson !== oldJson) {
+                    orchestrators = newOrchestrators;
+                    // Preserve selected orchestrator reference
+                    if (selectedOrchestrator) {
+                        selectedOrchestrator = orchestrators.find(o => o.id === selectedOrchestrator.id) || null;
+                    }
+                    renderOrchestrators();
+
+                    // Reload messages if orchestrator is selected
+                    if (selectedOrchestrator) {
+                        setTimeout(() => {
+                            loadOrchestratorMessages(selectedOrchestrator.id);
+                        }, 50);
+                    }
+                }
             } catch (err) {
                 log('Failed to load orchestrators: ' + err, 'error');
             }
@@ -726,13 +778,154 @@ Tmux: ${selectedSession.tmux_name}`;
             }
 
             list.innerHTML = orchestrators.map(o => `
-                <div class="orchestrator-item ${connectedOrchestrator && connectedOrchestrator.id === o.id ? 'connected' : ''}"
-                     onclick="connectToOrchestrator('${o.id}')">
-                    <span class="name">${o.status_emoji} ${o.title}</span>
-                    ${connectedOrchestrator && connectedOrchestrator.id === o.id ? '<span class="status-badge connected">Connected</span>' : ''}
+                <div class="orchestrator-item ${connectedOrchestrator && connectedOrchestrator.id === o.id ? 'connected' : ''} ${selectedOrchestrator && selectedOrchestrator.id === o.id ? 'selected' : ''}"
+                     data-orchestrator-id="${o.id}">
+                    <div class="orchestrator-header" onclick="selectOrchestrator('${o.id}')">
+                        <span class="name">${o.status_emoji} ${o.title}</span>
+                        ${connectedOrchestrator && connectedOrchestrator.id === o.id ? '<span class="status-badge connected">Connected</span>' : ''}
+                        <span class="session-status ${o.status}">${o.status}</span>
+                    </div>
                     <div class="room">${o.room_name}</div>
                 </div>
+                ${selectedOrchestrator && selectedOrchestrator.id === o.id ? `
+                    <div class="orchestrator-details-inline">
+                        ${o.status === 'waiting' ? `<div id="orchestratorWaitingForInfo" class="waiting-for-container"><small style="color:#666;">Loading...</small></div>` : ''}
+                        <p><strong>Project:</strong> ${o.project_path}</p>
+                        <p><strong>Tmux:</strong> <code>${o.tmux_name}</code></p>
+                        <div class="session-actions">
+                            <button onclick="connectToOrchestrator('${o.id}')">${connectedOrchestrator && connectedOrchestrator.id === o.id ? '🔌 Disconnect' : '🎙️ Connect Voice'}</button>
+                            <button onclick="copyOrchestratorContext()">📋 Copy context</button>
+                        </div>
+                        <div class="messages-section">
+                            <h4>Last Messages</h4>
+                            <div class="messages-list" id="orchestratorMessagesList">
+                                <p style="color: #666;">Loading...</p>
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
             `).join('');
+        }
+
+        function selectOrchestrator(id) {
+            // If clicking same orchestrator, toggle it off
+            if (selectedOrchestrator && selectedOrchestrator.id === id) {
+                selectedOrchestrator = null;
+                // Stop auto-refresh
+                if (orchestratorMessagesInterval) {
+                    clearInterval(orchestratorMessagesInterval);
+                    orchestratorMessagesInterval = null;
+                }
+                renderOrchestrators();
+                return;
+            }
+
+            selectedOrchestrator = orchestrators.find(o => o.id === id);
+            if (!selectedOrchestrator) return;
+
+            renderOrchestrators();
+            log(`Selected voice session: ${selectedOrchestrator.title}`, 'info');
+
+            // Load messages after DOM updates
+            setTimeout(() => {
+                loadOrchestratorMessages(id);
+                if (selectedOrchestrator && selectedOrchestrator.status === 'waiting') {
+                    loadOrchestratorWaitingFor(id);
+                }
+            }, 50);
+
+            // Start auto-refresh of messages every 3 seconds
+            if (orchestratorMessagesInterval) {
+                clearInterval(orchestratorMessagesInterval);
+            }
+            orchestratorMessagesInterval = setInterval(() => {
+                if (selectedOrchestrator) {
+                    loadOrchestratorMessages(selectedOrchestrator.id);
+                }
+            }, 3000);
+        }
+
+        async function loadOrchestratorMessages(sessionId) {
+            const messagesList = document.getElementById('orchestratorMessagesList');
+            if (!messagesList) return;
+
+            // Only show loading on first load
+            if (messagesList.innerHTML.includes('Loading...') || messagesList.children.length === 0) {
+                messagesList.innerHTML = '<p style="color: #666;">Loading messages...</p>';
+            }
+
+            try {
+                const resp = await fetch(`/api/sessions/${sessionId}/messages?count=10`);
+                const data = await resp.json();
+
+                if (data.messages && data.messages.length > 0) {
+                    const roleLabels = {
+                        'user': '👤 User',
+                        'assistant': '🤖 Assistant',
+                        'tool_result': '⚙️ Output'
+                    };
+                    messagesList.innerHTML = data.messages.map(msg => `
+                        <div class="message-item ${msg.role}">
+                            <div class="message-role">${roleLabels[msg.role] || msg.role}</div>
+                            <div class="message-content">${escapeHtml(msg.content)}</div>
+                            ${msg.tools ? `<div class="message-tools">Tools: ${msg.tools.join(', ')}</div>` : ''}
+                        </div>
+                    `).join('');
+                    // Auto-scroll to bottom
+                    messagesList.scrollTop = messagesList.scrollHeight;
+                } else {
+                    messagesList.innerHTML = '<p style="color: #666;">No messages found</p>';
+                }
+            } catch (err) {
+                messagesList.innerHTML = `<p style="color: #ff4444;">Error loading messages: ${err.message}</p>`;
+            }
+        }
+
+        async function loadOrchestratorWaitingFor(sessionId) {
+            try {
+                const resp = await fetch(`/api/sessions/${sessionId}/waiting-for`);
+                const data = await resp.json();
+
+                const container = document.getElementById('orchestratorWaitingForInfo');
+                if (!container) return;
+
+                if (data.waiting_for) {
+                    let html = `<div class="waiting-info">`;
+                    if (data.type === 'permission') {
+                        html += `<span class="waiting-type">🔐 Permission:</span> ${data.tool}`;
+                        if (data.description) {
+                            html += `<br><small>${escapeHtml(data.description)}</small>`;
+                        }
+                    } else if (data.type === 'question') {
+                        html += `<span class="waiting-type">❓ Question:</span><br>`;
+                        html += `<small>${escapeHtml(data.question)}</small>`;
+                        if (data.options && data.options.length > 0) {
+                            html += `<div class="options">`;
+                            data.options.forEach((opt, i) => {
+                                html += `<div class="option">${i+1}. ${escapeHtml(opt.label)}</div>`;
+                            });
+                            html += `</div>`;
+                        }
+                    }
+                    html += `</div>`;
+                    container.innerHTML = html;
+                } else {
+                    container.innerHTML = '<small style="color:#666;">Checking...</small>';
+                }
+            } catch (err) {
+                console.log('Failed to load waiting-for:', err);
+            }
+        }
+
+        function copyOrchestratorContext() {
+            if (!selectedOrchestrator) return;
+            const context = `Session: ${selectedOrchestrator.title}
+Project: ${selectedOrchestrator.project_path}
+Status: ${selectedOrchestrator.status}
+Tmux: ${selectedOrchestrator.tmux_name}
+Room: ${selectedOrchestrator.room_name}`;
+            navigator.clipboard?.writeText(context);
+            log(`Context copied for: ${selectedOrchestrator.title}`, 'success');
         }
 
         async function connectToOrchestrator(sessionId) {
@@ -767,12 +960,20 @@ Tmux: ${selectedSession.tmux_name}`;
                 connectedOrchestrator = orchestrator;
                 renderOrchestrators();
 
+                // Reload messages if selected
+                if (selectedOrchestrator) {
+                    setTimeout(() => loadOrchestratorMessages(selectedOrchestrator.id), 50);
+                }
+
                 // Now connect
                 await connectVoice();
             } catch (err) {
                 log('Failed to get token: ' + err, 'error');
                 connectedOrchestrator = null;
                 renderOrchestrators();
+                if (selectedOrchestrator) {
+                    setTimeout(() => loadOrchestratorMessages(selectedOrchestrator.id), 50);
+                }
             }
         }
 
@@ -792,6 +993,12 @@ Tmux: ${selectedSession.tmux_name}`;
             document.getElementById('talkBtn').textContent = '🎤 Click to Talk';
 
             renderOrchestrators();
+
+            // Reload messages if orchestrator still selected
+            if (selectedOrchestrator) {
+                setTimeout(() => loadOrchestratorMessages(selectedOrchestrator.id), 50);
+            }
+
             log('Disconnected', 'info');
         }
 
@@ -841,6 +1048,9 @@ Tmux: ${selectedSession.tmux_name}`;
                     connectedOrchestrator = null;
                     LIVEKIT_TOKEN = '';
                     renderOrchestrators();
+                    if (selectedOrchestrator) {
+                        setTimeout(() => loadOrchestratorMessages(selectedOrchestrator.id), 50);
+                    }
                 });
 
                 room.on(LivekitClient.RoomEvent.ParticipantConnected, (p) => {
@@ -868,6 +1078,9 @@ Tmux: ${selectedSession.tmux_name}`;
                 document.getElementById('connectBtn').disabled = false;
                 document.getElementById('talkBtn').disabled = true;
                 renderOrchestrators();
+                if (selectedOrchestrator) {
+                    setTimeout(() => loadOrchestratorMessages(selectedOrchestrator.id), 50);
+                }
             }
         }
 
