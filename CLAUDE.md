@@ -2,16 +2,37 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Voice Interaction
-
-Load the voicemode skill for voice conversation support: `/voicemode:voicemode`
-
 ## iPhone Voice Control (Voice Watcher)
 
-This session can be controlled via voice from an iPhone. The system allows:
-- Speaking to Claude via iPhone microphone
-- Hearing Claude's responses via TTS
-- Approving permission prompts by voice (say "yes" or "no")
+This session can be controlled via voice from an iPhone. When voice_loop.py is running:
+- **Input**: User speech is automatically transcribed and sent to this session (no action needed)
+- **Output**: Use `uv run voicemode converse -m "message" --no-wait` to speak to user
+- **Permission prompts**: Handled automatically by voice hook (user says "yes" or "no")
+
+### How It Works
+
+```
+iPhone speaks → voice_loop.py transcribes → sends to tmux → appears as input here
+Claude responds → TTS command → LiveKit → iPhone hears it
+```
+
+**No skill loading required** - voice I/O is handled externally by voice_loop.py and hooks.
+
+### Speaking to User
+
+To say something to the user via TTS:
+```bash
+uv run voicemode converse -m "Your message here" --no-wait
+```
+
+### Available Skills (optional)
+
+These skills provide additional functionality but are **not required** for basic voice operation:
+
+| Skill | When to use |
+|-------|-------------|
+| `/session-watcher` | Check status of other AoE sessions, send commands to them |
+| `/voicemode-dj` | Background music control during sessions |
 
 ### Quick Start
 
