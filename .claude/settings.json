@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/maciej/work/drads/voice-mode/voice-mode/.claude/hooks/voice-permission.sh",
+            "timeout": 60,
+            "statusMessage": "Waiting for voice approval..."
+          }
+        ]
+      }
+    ]
+  }
+}

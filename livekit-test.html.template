@@ -30,6 +30,30 @@
             color: #888;
             cursor: not-allowed;
         }
+        #talkBtn {
+            background: #00ff88;
+            font-size: 24px;
+            padding: 20px 40px;
+            margin: 20px 10px;
+        }
+        #talkBtn.talking {
+            background: #ff4444;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        .mode-toggle {
+            margin: 10px 0;
+            padding: 10px;
+            background: #2a2a4e;
+            border-radius: 8px;
+        }
+        .mode-toggle label {
+            margin-right: 20px;
+            cursor: pointer;
+        }
         #status {
             padding: 20px;
             background: #2a2a4e;
@@ -69,6 +93,17 @@
     <button id="micBtn" onclick="enableMic()" disabled>Enable Mic</button>
     <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
 
+    <div class="mode-toggle" id="modeToggle" style="display:none;">
+        <strong>Mode:</strong>
+        <label><input type="radio" name="mode" value="auto" checked onchange="setMode('auto')"> Auto (always on)</label>
+        <label><input type="radio" name="mode" value="toggle" onchange="setMode('toggle')"> Toggle (click to start/stop)</label>
+        <label><input type="radio" name="mode" value="hold" onchange="setMode('hold')"> Hold to Talk</label>
+    </div>
+
+    <button id="talkBtn" style="display:none;" onclick="toggleTalking()">
+        🎤 Click to Talk
+    </button>
+
     <h3>Log:</h3>
     <div id="log"></div>
 
@@ -77,6 +112,8 @@
         const TOKEN = '{{LIVEKIT_TOKEN}}';
 
         let room = null;
+        let currentMode = 'auto';  // 'auto', 'toggle', or 'hold'
+        let isTalking = false;
 
         function log(msg) {
             const logEl = document.getElementById('log');
@@ -90,6 +127,88 @@
             const el = document.getElementById('status');
             el.textContent = 'Status: ' + msg;
             el.className = type || '';
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            const talkBtn = document.getElementById('talkBtn');
+
+            if (mode === 'auto') {
+                talkBtn.style.display = 'none';
+                isTalking = false;
+                talkBtn.classList.remove('talking');
+                if (room && room.localParticipant) {
+                    room.localParticipant.setMicrophoneEnabled(true);
+                }
+                log('Auto mode: mic always on');
+            } else if (mode === 'toggle') {
+                talkBtn.style.display = 'inline-block';
+                talkBtn.textContent = '🎤 Click to Talk';
+                talkBtn.onclick = toggleTalking;
+                talkBtn.onmousedown = null;
+                talkBtn.onmouseup = null;
+                talkBtn.ontouchstart = null;
+                talkBtn.ontouchend = null;
+                isTalking = false;
+                talkBtn.classList.remove('talking');
+                if (room && room.localParticipant) {
+                    room.localParticipant.setMicrophoneEnabled(false);
+                }
+                log('Toggle mode: click to start/stop');
+            } else if (mode === 'hold') {
+                talkBtn.style.display = 'inline-block';
+                talkBtn.textContent = '🎤 Hold to Talk';
+                talkBtn.onclick = null;
+                talkBtn.onmousedown = startTalking;
+                talkBtn.onmouseup = stopTalking;
+                talkBtn.ontouchstart = startTalking;
+                talkBtn.ontouchend = stopTalking;
+                isTalking = false;
+                talkBtn.classList.remove('talking');
+                if (room && room.localParticipant) {
+                    room.localParticipant.setMicrophoneEnabled(false);
+                }
+                log('Hold mode: hold button to talk');
+            }
+        }
+
+        async function toggleTalking() {
+            if (!room || currentMode !== 'toggle') return;
+            const talkBtn = document.getElementById('talkBtn');
+
+            if (isTalking) {
+                // Stop talking
+                isTalking = false;
+                talkBtn.classList.remove('talking');
+                talkBtn.textContent = '🎤 Click to Talk';
+                await room.localParticipant.setMicrophoneEnabled(false);
+                log('Stopped talking');
+            } else {
+                // Start talking
+                isTalking = true;
+                talkBtn.classList.add('talking');
+                talkBtn.textContent = '🔴 Click to Stop';
+                await room.localParticipant.setMicrophoneEnabled(true);
+                log('Started talking');
+            }
+        }
+
+        async function startTalking() {
+            if (!room || currentMode !== 'hold') return;
+            isTalking = true;
+            document.getElementById('talkBtn').classList.add('talking');
+            document.getElementById('talkBtn').textContent = '🔴 Speaking...';
+            await room.localParticipant.setMicrophoneEnabled(true);
+            log('Started talking (hold)');
+        }
+
+        async function stopTalking() {
+            if (!room || currentMode !== 'hold') return;
+            isTalking = false;
+            document.getElementById('talkBtn').classList.remove('talking');
+            document.getElementById('talkBtn').textContent = '🎤 Hold to Talk';
+            await room.localParticipant.setMicrophoneEnabled(false);
+            log('Stopped talking (hold)');
         }
 
         async function connect() {
@@ -113,6 +232,8 @@
                     document.getElementById('connectBtn').disabled = false;
                     document.getElementById('micBtn').disabled = true;
                     document.getElementById('disconnectBtn').disabled = true;
+                    document.getElementById('modeToggle').style.display = 'none';
+                    document.getElementById('talkBtn').style.display = 'none';
                 });
 
                 room.on(LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
@@ -154,6 +275,9 @@
                 await room.localParticipant.setMicrophoneEnabled(true);
                 log('Microphone enabled!');
                 document.getElementById('micBtn').disabled = true;
+                // Show mode toggle after mic enabled
+                document.getElementById('modeToggle').style.display = 'block';
+                log('Choose mode: Auto (always on) or Push-to-Talk');
             } catch (err) {
                 log('Mic error: ' + err.message);
                 setStatus('Mic error (needs HTTPS?)', 'error');

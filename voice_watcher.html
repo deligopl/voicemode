@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Voice Watcher</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #00d4ff;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #888;
+            margin-bottom: 20px;
+        }
+
+        /* Voice Controls */
+        .voice-section {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .voice-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #666;
+        }
+        .status-dot.connected { background: #00ff88; }
+        .status-dot.talking { background: #ff4444; animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .voice-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            background: #00d4ff;
+            color: #0f0f1a;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        button:hover { background: #00b8e6; }
+        button:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+        button.talk-btn {
+            background: #00ff88;
+            font-size: 18px;
+            padding: 15px 30px;
+        }
+        button.talk-btn.talking {
+            background: #ff4444;
+        }
+
+        /* Sessions */
+        .sessions-section {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .sessions-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .sessions-header h2 {
+            margin: 0;
+            color: #fff;
+        }
+        .filter-tabs {
+            display: flex;
+            gap: 5px;
+        }
+        .filter-tab {
+            padding: 6px 12px;
+            background: #2a2a4e;
+            border: none;
+            border-radius: 6px;
+            color: #aaa;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .filter-tab.active {
+            background: #00d4ff;
+            color: #0f0f1a;
+        }
+
+        .session-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .session-item {
+            background: #2a2a4e;
+            border-radius: 8px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-left: 4px solid transparent;
+            -webkit-tap-highlight-color: rgba(0, 212, 255, 0.3);
+            user-select: none;
+        }
+        .session-item:hover,
+        .session-item:active {
+            background: #3a3a5e;
+        }
+        .session-item.selected {
+            border-left-color: #00d4ff;
+            background: #3a3a5e;
+        }
+        .session-item.waiting {
+            border-left-color: #ffaa00;
+        }
+        .session-item.running {
+            border-left-color: #00ff88;
+        }
+
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .session-title {
+            font-weight: 600;
+            color: #fff;
+        }
+        .session-status {
+            font-size: 14px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            background: #444;
+        }
+        .session-status.waiting { background: #664400; color: #ffaa00; }
+        .session-status.running { background: #004422; color: #00ff88; }
+
+        .session-meta {
+            font-size: 13px;
+            color: #888;
+        }
+
+        .session-group {
+            margin-bottom: 20px;
+        }
+        .group-header {
+            font-size: 12px;
+            font-weight: 600;
+            color: #00d4ff;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 8px 0;
+            border-bottom: 1px solid #333;
+            margin-bottom: 10px;
+        }
+        .group-sessions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        /* Inline session details */
+        .session-details-inline {
+            background: #1a2a3e;
+            border-radius: 0 0 8px 8px;
+            padding: 15px;
+            margin-top: -8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #00d4ff;
+            animation: slideDown 0.2s ease-out;
+        }
+        @keyframes slideDown {
+            from { opacity: 0; max-height: 0; }
+            to { opacity: 1; max-height: 500px; }
+        }
+        .session-details-inline p {
+            margin: 5px 0;
+            color: #aaa;
+            font-size: 13px;
+        }
+        .session-details-inline code {
+            background: #0a0a14;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .session-actions {
+            margin: 10px 0;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .session-actions button {
+            padding: 8px 16px;
+            font-size: 14px;
+        }
+
+        /* Waiting for info */
+        .waiting-for-container {
+            background: #2a1a1e;
+            border: 1px solid #ffaa00;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .waiting-info {
+            color: #ffcc00;
+            font-size: 13px;
+        }
+        .waiting-type {
+            font-weight: bold;
+            color: #ffaa00;
+        }
+        .waiting-info .options {
+            margin-top: 8px;
+            padding-left: 10px;
+        }
+        .waiting-info .option {
+            color: #aaa;
+            font-size: 12px;
+            padding: 2px 0;
+        }
+
+        /* Messages */
+        .messages-section {
+            margin-top: 15px;
+            border-top: 1px solid #444;
+            padding-top: 15px;
+        }
+        .messages-section h4 {
+            margin: 0 0 10px 0;
+            color: #888;
+            font-size: 14px;
+        }
+        .messages-list {
+            max-height: 300px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .message-item {
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .message-item.user {
+            background: #1a3a4e;
+            border-left: 3px solid #00d4ff;
+        }
+        .message-item.assistant {
+            background: #2a3a2e;
+            border-left: 3px solid #00ff88;
+        }
+        .message-item.tool_result {
+            background: #2a2a3e;
+            border-left: 3px solid #888;
+            font-size: 12px;
+        }
+        .message-role {
+            font-size: 11px;
+            font-weight: 600;
+            color: #888;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+        }
+        .message-content {
+            color: #ddd;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .message-tools {
+            margin-top: 5px;
+            font-size: 11px;
+            color: #ffaa00;
+        }
+
+        /* Log */
+        .log {
+            margin-top: 20px;
+            background: #0a0a14;
+            border-radius: 8px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .log-entry {
+            margin: 2px 0;
+            color: #666;
+        }
+        .log-entry.info { color: #00d4ff; }
+        .log-entry.success { color: #00ff88; }
+        .log-entry.error { color: #ff4444; }
+
+        /* Orchestrators */
+        .orchestrators-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #1a1a2e;
+            border-radius: 8px;
+            border: 1px solid #3a3a5e;
+        }
+        .orchestrators-section h3 {
+            margin: 0 0 10px 0;
+            color: #00d4ff;
+            font-size: 16px;
+        }
+        .orchestrator-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .orchestrator-item {
+            background: #2a2a4e;
+            border-radius: 6px;
+            padding: 10px 15px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .orchestrator-item:hover {
+            background: #3a3a5e;
+        }
+        .orchestrator-item.connected {
+            border-color: #00ff88;
+            background: #1a3a2e;
+        }
+        .orchestrator-item .name {
+            font-weight: 600;
+            color: #fff;
+        }
+        .orchestrator-item .room {
+            font-size: 11px;
+            color: #666;
+        }
+        .orchestrator-item .status-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            margin-left: 8px;
+        }
+        .orchestrator-item .status-badge.connected {
+            background: #00ff88;
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Voice Watcher</h1>
+        <p class="subtitle">Monitor and interact with Claude Code sessions via voice</p>
+
+        <!-- Voice Controls -->
+        <div class="voice-section">
+            <div class="voice-status">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="voiceStatus">Not connected</span>
+            </div>
+            <div class="voice-buttons">
+                <button id="connectBtn" onclick="connectVoice()">Connect Voice</button>
+                <button id="talkBtn" class="talk-btn" onclick="toggleTalk()" disabled>🎤 Click to Talk</button>
+            </div>
+        </div>
+
+        <!-- Orchestrators (Voice-enabled sessions) -->
+        <div class="orchestrators-section">
+            <h3>🎙️ Voice Sessions (Orchestrators)</h3>
+            <div class="orchestrator-list" id="orchestratorList">
+                <p style="color: #666;">Loading...</p>
+            </div>
+        </div>
+
+        <!-- Sessions -->
+        <div class="sessions-section">
+            <div class="sessions-header">
+                <h2>Sessions</h2>
+                <div class="filter-tabs">
+                    <button class="filter-tab active" onclick="filterSessions('all')">All</button>
+                    <button class="filter-tab" onclick="filterSessions('waiting')">⏳ Waiting</button>
+                    <button class="filter-tab" onclick="filterSessions('running')">🔄 Running</button>
+                </div>
+            </div>
+            <div class="session-list" id="sessionList">
+                <p style="color: #666;">Loading sessions...</p>
+            </div>
+
+        </div>
+
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        // Configuration - loaded from server
+        let LIVEKIT_URL = '';
+        let LIVEKIT_TOKEN = '';
+        let LIVEKIT_ROOM = '';
+
+        let room = null;
+        let isTalking = false;
+        let currentMode = 'toggle';  // 'auto' or 'toggle'
+        let sessions = [];
+        let selectedSession = null;
+        let currentFilter = 'all';
+        let orchestrators = [];
+        let connectedOrchestrator = null;
+
+        function log(msg, type = '') {
+            const logEl = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry ' + type;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(msg);
+        }
+
+        // === LiveKit Config ===
+
+        async function loadLiveKitConfig() {
+            try {
+                const resp = await fetch('/api/livekit/token');
+                const data = await resp.json();
+                LIVEKIT_URL = data.url;
+                LIVEKIT_TOKEN = data.token;
+                LIVEKIT_ROOM = data.room;
+                log(`LiveKit config loaded (room: ${LIVEKIT_ROOM})`, 'info');
+                return true;
+            } catch (err) {
+                log('Failed to load LiveKit config: ' + err, 'error');
+                return false;
+            }
+        }
+
+        // === Sessions ===
+
+        async function loadSessions() {
+            try {
+                const resp = await fetch('/api/sessions');
+                const data = await resp.json();
+
+                // Check if sessions actually changed before re-rendering
+                const newSessionsJson = JSON.stringify(data.sessions.map(s => ({id: s.id, status: s.status})));
+                const oldSessionsJson = JSON.stringify(sessions.map(s => ({id: s.id, status: s.status})));
+
+                if (newSessionsJson !== oldSessionsJson) {
+                    sessions = data.sessions;
+                    renderSessions();
+                }
+
+                // Only log on first load or when counts change
+                if (!window._lastSessionCount || window._lastSessionCount !== sessions.length) {
+                    log(`${sessions.length} sessions (${data.waiting} waiting, ${data.running} running)`, 'info');
+                    window._lastSessionCount = sessions.length;
+                }
+            } catch (err) {
+                log('Failed to load sessions: ' + err, 'error');
+            }
+        }
+
+        function renderSessions() {
+            console.log('renderSessions called, sessions count:', sessions.length);
+            const list = document.getElementById('sessionList');
+            if (!list) {
+                console.error('sessionList element not found!');
+                return;
+            }
+            let filtered = sessions;
+
+            if (currentFilter === 'waiting') {
+                filtered = sessions.filter(s => s.status === 'waiting');
+            } else if (currentFilter === 'running') {
+                filtered = sessions.filter(s => s.status === 'running');
+            }
+
+            if (filtered.length === 0) {
+                list.innerHTML = '<p style="color: #666;">No sessions found</p>';
+                return;
+            }
+
+            // Group by group_path
+            const groups = {};
+            filtered.forEach(s => {
+                const group = s.group_path || 'Other';
+                if (!groups[group]) groups[group] = [];
+                groups[group].push(s);
+            });
+
+            // Sort groups alphabetically
+            const sortedGroups = Object.keys(groups).sort();
+
+            list.innerHTML = sortedGroups.map(groupName => `
+                <div class="session-group">
+                    <div class="group-header">${groupName}</div>
+                    <div class="group-sessions">
+                        ${groups[groupName].map(s => `
+                            <div class="session-item ${s.status} ${selectedSession && selectedSession.id === s.id ? 'selected' : ''}"
+                                 data-session-id="${s.id}">
+                                <div class="session-header">
+                                    <span class="session-title">${s.status_emoji} ${s.title}</span>
+                                    <span class="session-status ${s.status}">${s.status}</span>
+                                </div>
+                                <div class="session-meta">
+                                    ${s.project_path.split('/').slice(-2).join('/')}
+                                </div>
+                            </div>
+                            ${selectedSession && selectedSession.id === s.id ? `
+                                <div class="session-details-inline">
+                                    ${s.status === 'waiting' ? `<div id="waitingForInfo" class="waiting-for-container"><small style="color:#666;">Loading...</small></div>` : ''}
+                                    <p><strong>Project:</strong> ${s.project_path}</p>
+                                    <p><strong>Tmux:</strong> <code>${s.tmux_name}</code></p>
+                                    <div class="session-actions">
+                                        <button onclick="copySessionContext()">📋 Copy context</button>
+                                        <button onclick="connectToSession()">🔗 Copy tmux</button>
+                                    </div>
+                                    <div class="messages-section">
+                                        <h4>Last Messages</h4>
+                                        <div class="messages-list" id="messagesList">
+                                            <p style="color: #666;">Loading...</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+
+            // Add click handlers (works for both mouse and touch on modern browsers)
+            const items = list.querySelectorAll('.session-item');
+            console.log('Adding click handlers to', items.length, 'session items');
+
+            items.forEach(function(item) {
+                item.onclick = function() {
+                    var sessionId = this.getAttribute('data-session-id');
+                    if (sessionId) {
+                        selectSession(sessionId, this);
+                    }
+                };
+            });
+        }
+
+        function filterSessions(filter) {
+            currentFilter = filter;
+            document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            renderSessions();
+        }
+
+        function selectSession(id, clickedElement) {
+            console.log('selectSession called with id:', id);
+
+            // If clicking same session, toggle it off
+            if (selectedSession && selectedSession.id === id) {
+                selectedSession = null;
+                renderSessions();
+                return;
+            }
+
+            selectedSession = sessions.find(s => s.id === id);
+            if (!selectedSession) {
+                console.log('Session not found for id:', id);
+                return;
+            }
+            console.log('Selected session:', selectedSession.title);
+
+            // Re-render to show inline details
+            renderSessions();
+
+            log(`Selected: ${selectedSession.title}`, 'info');
+
+            // Load messages for this session
+            loadSessionMessages(id);
+
+            // If waiting, load what it's waiting for
+            if (selectedSession.status === 'waiting') {
+                loadWaitingFor(id);
+            }
+        }
+
+        async function loadWaitingFor(sessionId) {
+            try {
+                const resp = await fetch(`/api/sessions/${sessionId}/waiting-for`);
+                const data = await resp.json();
+
+                const container = document.getElementById('waitingForInfo');
+                if (!container) return;
+
+                if (data.waiting_for) {
+                    let html = `<div class="waiting-info">`;
+                    if (data.type === 'permission') {
+                        html += `<span class="waiting-type">🔐 Permission:</span> ${data.tool}`;
+                        if (data.description) {
+                            html += `<br><small>${escapeHtml(data.description)}</small>`;
+                        }
+                    } else if (data.type === 'question') {
+                        html += `<span class="waiting-type">❓ Question:</span><br>`;
+                        html += `<small>${escapeHtml(data.question)}</small>`;
+                        if (data.options && data.options.length > 0) {
+                            html += `<div class="options">`;
+                            data.options.forEach((opt, i) => {
+                                html += `<div class="option">${i+1}. ${escapeHtml(opt.label)}</div>`;
+                            });
+                            html += `</div>`;
+                        }
+                    }
+                    html += `</div>`;
+                    container.innerHTML = html;
+                } else {
+                    container.innerHTML = '<small style="color:#666;">Checking...</small>';
+                }
+            } catch (err) {
+                console.log('Failed to load waiting-for:', err);
+            }
+        }
+
+        async function loadSessionMessages(sessionId) {
+            const messagesList = document.getElementById('messagesList');
+            messagesList.innerHTML = '<p style="color: #666;">Loading messages...</p>';
+
+            try {
+                const resp = await fetch(`/api/sessions/${sessionId}/messages?count=10`);
+                const data = await resp.json();
+
+                if (data.messages && data.messages.length > 0) {
+                    const roleLabels = {
+                        'user': '👤 User',
+                        'assistant': '🤖 Assistant',
+                        'tool_result': '⚙️ Output'
+                    };
+                    messagesList.innerHTML = data.messages.map(msg => `
+                        <div class="message-item ${msg.role}">
+                            <div class="message-role">${roleLabels[msg.role] || msg.role}</div>
+                            <div class="message-content">${escapeHtml(msg.content)}</div>
+                            ${msg.tools ? `<div class="message-tools">Tools: ${msg.tools.join(', ')}</div>` : ''}
+                        </div>
+                    `).join('');
+                } else {
+                    messagesList.innerHTML = '<p style="color: #666;">No messages found (session file may not exist)</p>';
+                }
+            } catch (err) {
+                messagesList.innerHTML = `<p style="color: #ff4444;">Error loading messages: ${err.message}</p>`;
+                log('Failed to load messages: ' + err, 'error');
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function copySessionContext() {
+            if (!selectedSession) return;
+            const context = `Session: ${selectedSession.title}
+Project: ${selectedSession.project_path}
+Status: ${selectedSession.status}
+Tmux: ${selectedSession.tmux_name}`;
+            navigator.clipboard?.writeText(context);
+            log(`Context copied for: ${selectedSession.title}`, 'success');
+        }
+
+        function connectToSession() {
+            if (!selectedSession) return;
+            const cmd = `tmux attach -t ${selectedSession.tmux_name}`;
+            log(`To connect, run: ${cmd}`, 'info');
+            // Copy to clipboard
+            navigator.clipboard?.writeText(cmd);
+        }
+
+        // === Orchestrators ===
+
+        async function loadOrchestrators() {
+            try {
+                const resp = await fetch('/api/orchestrators');
+                const data = await resp.json();
+                orchestrators = data.orchestrators || [];
+                renderOrchestrators();
+            } catch (err) {
+                log('Failed to load orchestrators: ' + err, 'error');
+            }
+        }
+
+        function renderOrchestrators() {
+            const list = document.getElementById('orchestratorList');
+            if (!list) return;
+
+            if (orchestrators.length === 0) {
+                list.innerHTML = '<p style="color: #666;">No voice sessions found</p>';
+                return;
+            }
+
+            list.innerHTML = orchestrators.map(o => `
+                <div class="orchestrator-item ${connectedOrchestrator && connectedOrchestrator.id === o.id ? 'connected' : ''}"
+                     onclick="connectToOrchestrator('${o.id}')">
+                    <span class="name">${o.status_emoji} ${o.title}</span>
+                    ${connectedOrchestrator && connectedOrchestrator.id === o.id ? '<span class="status-badge connected">Connected</span>' : ''}
+                    <div class="room">${o.room_name}</div>
+                </div>
+            `).join('');
+        }
+
+        async function connectToOrchestrator(sessionId) {
+            const orchestrator = orchestrators.find(o => o.id === sessionId);
+            if (!orchestrator) {
+                log('Orchestrator not found', 'error');
+                return;
+            }
+
+            // If already connected to this one, disconnect
+            if (connectedOrchestrator && connectedOrchestrator.id === sessionId) {
+                await disconnectVoice();
+                return;
+            }
+
+            // Disconnect from current if connected
+            if (room) {
+                await disconnectVoice();
+            }
+
+            log(`Connecting to ${orchestrator.title}...`, 'info');
+
+            try {
+                // Get token for default room (all orchestrators share same LiveKit room for now)
+                const resp = await fetch(`/api/livekit/token`);
+                const data = await resp.json();
+
+                LIVEKIT_URL = data.url;
+                LIVEKIT_TOKEN = data.token;
+                LIVEKIT_ROOM = data.room;
+
+                connectedOrchestrator = orchestrator;
+                renderOrchestrators();
+
+                // Now connect
+                await connectVoice();
+            } catch (err) {
+                log('Failed to get token: ' + err, 'error');
+                connectedOrchestrator = null;
+                renderOrchestrators();
+            }
+        }
+
+        async function disconnectVoice() {
+            if (room) {
+                await room.disconnect();
+                room = null;
+            }
+            connectedOrchestrator = null;
+            isTalking = false;
+            LIVEKIT_TOKEN = '';
+
+            document.getElementById('statusDot').classList.remove('connected', 'talking');
+            document.getElementById('voiceStatus').textContent = 'Not connected';
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('talkBtn').disabled = true;
+            document.getElementById('talkBtn').textContent = '🎤 Click to Talk';
+
+            renderOrchestrators();
+            log('Disconnected', 'info');
+        }
+
+        // === Voice ===
+
+        async function connectVoice() {
+            // If no token and orchestrators exist, prompt to select one
+            if (!LIVEKIT_TOKEN && orchestrators.length > 0) {
+                log('Select a voice session to connect', 'info');
+                return;
+            }
+
+            // Load token if not already loaded (fallback for no orchestrators)
+            if (!LIVEKIT_TOKEN) {
+                const ok = await loadLiveKitConfig();
+                if (!ok) {
+                    log('Cannot connect without config', 'error');
+                    return;
+                }
+            }
+
+            log('Connecting to LiveKit...', 'info');
+
+            try {
+                room = new LivekitClient.Room();
+
+                room.on(LivekitClient.RoomEvent.Connected, () => {
+                    log('Connected to room: ' + LIVEKIT_ROOM, 'success');
+                    document.getElementById('statusDot').classList.add('connected');
+                    const statusText = connectedOrchestrator
+                        ? `Connected to ${connectedOrchestrator.title}`
+                        : 'Connected';
+                    document.getElementById('voiceStatus').textContent = statusText;
+                    document.getElementById('connectBtn').disabled = true;
+                    document.getElementById('talkBtn').disabled = false;
+                });
+
+                room.on(LivekitClient.RoomEvent.Disconnected, () => {
+                    log('Disconnected', 'info');
+                    document.getElementById('statusDot').classList.remove('connected', 'talking');
+                    document.getElementById('voiceStatus').textContent = 'Not connected';
+                    document.getElementById('connectBtn').disabled = false;
+                    document.getElementById('talkBtn').disabled = true;
+                    document.getElementById('talkBtn').textContent = '🎤 Click to Talk';
+                    room = null;
+                    isTalking = false;
+                    connectedOrchestrator = null;
+                    LIVEKIT_TOKEN = '';
+                    renderOrchestrators();
+                });
+
+                room.on(LivekitClient.RoomEvent.ParticipantConnected, (p) => {
+                    log('Participant joined: ' + p.identity, 'info');
+                });
+
+                room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, participant) => {
+                    log('Audio from: ' + participant.identity, 'info');
+                    if (track.kind === 'audio') {
+                        const el = track.attach();
+                        document.body.appendChild(el);
+                    }
+                });
+
+                await room.connect(LIVEKIT_URL, LIVEKIT_TOKEN);
+
+            } catch (err) {
+                log('Connection error: ' + err.message, 'error');
+                // Reset state on error
+                room = null;
+                connectedOrchestrator = null;
+                LIVEKIT_TOKEN = '';
+                document.getElementById('statusDot').classList.remove('connected', 'talking');
+                document.getElementById('voiceStatus').textContent = 'Connection failed';
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('talkBtn').disabled = true;
+                renderOrchestrators();
+            }
+        }
+
+        async function toggleTalk() {
+            if (!room) {
+                log('Not connected', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('talkBtn');
+            const dot = document.getElementById('statusDot');
+
+            if (isTalking) {
+                // Stop talking
+                isTalking = false;
+                btn.textContent = '🎤 Click to Talk';
+                btn.classList.remove('talking');
+                dot.classList.remove('talking');
+                await room.localParticipant.setMicrophoneEnabled(false);
+                log('Mic off', 'info');
+            } else {
+                // Start talking
+                try {
+                    await room.localParticipant.setMicrophoneEnabled(true);
+                    isTalking = true;
+                    btn.textContent = '🔴 Click to Stop';
+                    btn.classList.add('talking');
+                    dot.classList.add('talking');
+                    log('Mic on - speak now', 'success');
+                } catch (err) {
+                    log('Mic error: ' + err.message, 'error');
+                }
+            }
+        }
+
+        // === Init ===
+
+        console.log('Voice Watcher initializing...');
+
+        // Wrap in try/catch to see errors
+        try {
+            loadSessions();
+            loadOrchestrators();
+            // Refresh sessions and orchestrators every 5 seconds
+            setInterval(loadSessions, 5000);
+            setInterval(loadOrchestrators, 5000);
+            console.log('Voice Watcher initialized OK');
+        } catch (err) {
+            console.error('Init error:', err);
+            alert('Init error: ' + err.message);
+        }
+    </script>
+</body>
+</html>

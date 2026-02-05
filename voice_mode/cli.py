@@ -3021,3 +3021,346 @@ def favorite():
     click.echo(f"{artist} - {track.title} {status_str} favorites")
 
 
+# ============================================================================
+# Sessions Command Group
+# ============================================================================
+# Monitor Claude Code sessions from Agent of Empires
+#   voicemode sessions list
+#   voicemode sessions waiting
+#   voicemode sessions info <name>
+#   voicemode sessions history <name>
+
+@voice_mode_main_cli.group()
+@click.help_option('-h', '--help')
+def sessions():
+    """Monitor Claude Code sessions.
+
+    \b
+    View and analyze other Claude Code sessions running in Agent of Empires.
+    This is READ-ONLY - sessions are managed by AoE.
+
+    \b
+    Examples:
+      voicemode sessions list              # All sessions
+      voicemode sessions waiting           # Sessions needing input
+      voicemode sessions info GreenRoom    # Details about a session
+      voicemode sessions history GreenRoom # Last messages from session
+    """
+    pass
+
+
+@sessions.command("list")
+@click.option('--status', '-s', type=click.Choice(['all', 'waiting', 'running', 'idle']),
+              default='all', help='Filter by status')
+def sessions_list(status):
+    """List all Claude Code sessions."""
+    from .sessions import list_sessions
+
+    all_sessions = list_sessions()
+
+    if not all_sessions:
+        click.echo("No sessions found.")
+        click.echo("Is Agent of Empires running?")
+        return
+
+    if status != 'all':
+        all_sessions = [s for s in all_sessions if s.status == status]
+
+    if not all_sessions:
+        click.echo(f"No {status} sessions.")
+        return
+
+    # Group by group_path
+    groups = {}
+    for s in all_sessions:
+        group = s.group_path or "Other"
+        if group not in groups:
+            groups[group] = []
+        groups[group].append(s)
+
+    for group_name in sorted(groups.keys()):
+        click.echo(click.style(f"\n{group_name}", fg="cyan", bold=True))
+        for s in groups[group_name]:
+            status_color = {'waiting': 'yellow', 'running': 'green', 'idle': 'white'}.get(s.status, 'white')
+            click.echo(f"  {s.status_emoji} {s.title} " + click.style(f"[{s.status}]", fg=status_color))
+
+
+@sessions.command("waiting")
+@click.option('--details', '-d', is_flag=True, help='Show what each session is waiting for')
+def sessions_waiting(details):
+    """Show sessions waiting for user input."""
+    from .sessions import get_waiting_sessions, get_pending_permission, get_pending_question
+
+    waiting = get_waiting_sessions()
+
+    if not waiting:
+        click.echo("No sessions waiting for input.")
+        return
+
+    click.echo(click.style(f"{len(waiting)} sessions waiting:", fg="yellow", bold=True))
+    for s in waiting:
+        click.echo(f"  ⏳ {s.title} ({s.group_path})")
+
+        if details:
+            # Check what it's waiting for
+            perm = get_pending_permission(s)
+            question = get_pending_question(s)
+
+            if perm:
+                click.echo(f"     → Tool: {perm['tool']}: {perm.get('description', '')[:50]}")
+            elif question:
+                click.echo(f"     → Question: {question.get('question', '')[:50]}")
+            else:
+                click.echo(f"     → (unknown - check tmux: {s.tmux_name})")
+
+
+@sessions.command("info")
+@click.argument('name')
+def sessions_info(name):
+    """Show details about a session.
+
+    NAME is a partial match against session titles.
+    """
+    from .sessions import find_session, get_session_file
+
+    session = find_session(name)
+    if not session:
+        click.echo(f"No session found matching: {name}", err=True)
+        return
+
+    click.echo(click.style(f"{session.status_emoji} {session.title}", fg="cyan", bold=True))
+    click.echo(f"  Status:  {session.status}")
+    click.echo(f"  Group:   {session.group_path}")
+    click.echo(f"  Project: {session.project_path}")
+    click.echo(f"  Tmux:    {session.tmux_name}")
+    click.echo(f"  ID:      {session.id}")
+
+    session_file = get_session_file(session)
+    if session_file:
+        click.echo(f"  History: {session_file.name}")
+    else:
+        click.echo("  History: (no session file found)")
+
+
+@sessions.command("history")
+@click.argument('name')
+@click.option('--count', '-n', default=10, help='Number of messages to show')
+def sessions_history(name, count):
+    """Show recent messages from a session.
+
+    NAME is a partial match against session titles.
+    """
+    from .sessions import find_session, read_session_messages
+
+    session = find_session(name)
+    if not session:
+        click.echo(f"No session found matching: {name}", err=True)
+        return
+
+    click.echo(click.style(f"History: {session.title}", fg="cyan", bold=True))
+    click.echo()
+
+    messages = read_session_messages(session, count)
+
+    if not messages:
+        click.echo("No messages found.")
+        return
+
+    for msg in messages:
+        role = msg["role"]
+        role_color = "blue" if role == "user" else "green"
+        role_label = "User" if role == "user" else "Assistant"
+
+        click.echo(click.style(f"[{role_label}]", fg=role_color, bold=True))
+
+        if msg.get("tools"):
+            click.echo(f"  Tools: {', '.join(msg['tools'])}")
+
+        if msg.get("text"):
+            # Wrap text for readability
+            text = msg["text"][:200]
+            if len(msg.get("text", "")) > 200:
+                text += "..."
+            click.echo(f"  {text}")
+
+        click.echo()
+
+
+@sessions.command("active")
+def sessions_active():
+    """Show all active sessions (running or waiting)."""
+    from .sessions import get_active_sessions
+
+    active = get_active_sessions()
+
+    if not active:
+        click.echo("No active sessions.")
+        return
+
+    running = [s for s in active if s.status == "running"]
+    waiting = [s for s in active if s.status == "waiting"]
+
+    if running:
+        click.echo(click.style(f"{len(running)} running:", fg="green", bold=True))
+        for s in running:
+            click.echo(f"  🔄 {s.title} ({s.group_path})")
+
+    if waiting:
+        click.echo(click.style(f"{len(waiting)} waiting:", fg="yellow", bold=True))
+        for s in waiting:
+            click.echo(f"  ⏳ {s.title} ({s.group_path})")
+
+
+@sessions.command("send")
+@click.argument('name')
+@click.argument('text')
+@click.option('--no-enter', is_flag=True, help='Do not press Enter after text')
+def sessions_send(name, text, no_enter):
+    """Send text to a session's tmux.
+
+    NAME is a partial match against session titles.
+    TEXT is the text to send.
+
+    Examples:
+        voicemode sessions send "Deligo" "yes"
+        voicemode sessions send "GreenRoom" "kontynuuj" --no-enter
+    """
+    from .sessions import find_session, send_to_session
+
+    session = find_session(name)
+    if not session:
+        click.echo(f"No session found matching: {name}", err=True)
+        return
+
+    if send_to_session(session, text, press_enter=not no_enter):
+        click.echo(f"Sent to {session.title}: {text}")
+    else:
+        click.echo(f"Failed to send to {session.tmux_name}", err=True)
+
+
+@sessions.command("confirm")
+@click.argument('name')
+@click.option('--no', 'deny', is_flag=True, help='Send "no" instead of "yes"')
+def sessions_confirm(name, deny):
+    """Send yes/no confirmation to a waiting session.
+
+    NAME is a partial match against session titles.
+
+    Examples:
+        voicemode sessions confirm "Deligo"      # sends "yes"
+        voicemode sessions confirm "Deligo" --no # sends "no"
+    """
+    from .sessions import find_session, send_confirmation
+
+    session = find_session(name)
+    if not session:
+        click.echo(f"No session found matching: {name}", err=True)
+        return
+
+    response = "no" if deny else "yes"
+    if send_confirmation(session, confirm=not deny):
+        click.echo(f"Sent '{response}' to {session.title}")
+    else:
+        click.echo(f"Failed to send to {session.tmux_name}", err=True)
+
+
+@sessions.command("question")
+@click.argument('name')
+def sessions_question(name):
+    """Show pending question from a waiting session.
+
+    NAME is a partial match against session titles.
+    """
+    from .sessions import find_session, get_pending_question
+
+    session = find_session(name)
+    if not session:
+        click.echo(f"No session found matching: {name}", err=True)
+        return
+
+    question = get_pending_question(session)
+    if not question:
+        click.echo(f"No pending question in {session.title}")
+        return
+
+    click.echo(click.style(f"Question in {session.title}:", fg="cyan", bold=True))
+    if question.get("header"):
+        click.echo(f"  [{question['header']}]")
+    click.echo(f"  {question['question']}")
+    click.echo()
+
+    options = question.get("options", [])
+    if options:
+        click.echo(click.style("Options:", fg="yellow"))
+        for i, opt in enumerate(options, 1):
+            label = opt.get("label", "")
+            desc = opt.get("description", "")
+            click.echo(f"  {i}. {label}")
+            if desc:
+                click.echo(f"     {desc[:80]}{'...' if len(desc) > 80 else ''}")
+    click.echo()
+    click.echo(f"Answer with: voicemode sessions answer \"{name}\" <number>")
+
+
+@sessions.command("answer")
+@click.argument('name')
+@click.argument('option', type=int)
+def sessions_answer(name, option):
+    """Answer a pending question in a session.
+
+    NAME is a partial match against session titles.
+    OPTION is the option number (1, 2, 3, etc.)
+
+    Examples:
+        voicemode sessions answer "Deligo" 1
+        voicemode sessions answer "GreenRoom" 2
+    """
+    from .sessions import find_session, answer_question, get_pending_question
+
+    session = find_session(name)
+    if not session:
+        click.echo(f"No session found matching: {name}", err=True)
+        return
+
+    # Show what we're answering
+    question = get_pending_question(session)
+    if question:
+        options = question.get("options", [])
+        if 0 < option <= len(options):
+            label = options[option - 1].get("label", "")
+            click.echo(f"Answering: {label}")
+
+    if answer_question(session, option):
+        click.echo(f"Sent option {option} to {session.title}")
+    else:
+        click.echo(f"Failed to send to {session.tmux_name}", err=True)
+
+
+@sessions.command("permission")
+@click.argument('name')
+def sessions_permission(name):
+    """Show pending tool permission request in a session.
+
+    NAME is a partial match against session titles.
+    """
+    from .sessions import find_session, get_pending_permission
+
+    session = find_session(name)
+    if not session:
+        click.echo(f"No session found matching: {name}", err=True)
+        return
+
+    perm = get_pending_permission(session)
+    if not perm:
+        click.echo(f"No pending permission in {session.title}")
+        return
+
+    click.echo(click.style(f"Permission request in {session.title}:", fg="yellow", bold=True))
+    click.echo(f"  Tool: {perm['tool']}")
+    if perm.get('description'):
+        click.echo(f"  {perm['description']}")
+    click.echo()
+    click.echo(f"Confirm with: voicemode sessions confirm \"{name}\"")
+    click.echo(f"Deny with:    voicemode sessions confirm \"{name}\" --no")
+
+
