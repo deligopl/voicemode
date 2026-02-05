@@ -6,6 +6,124 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Load the voicemode skill for voice conversation support: `/voicemode:voicemode`
 
+## iPhone Voice Control (Voice Watcher)
+
+This session can be controlled via voice from an iPhone. The system allows:
+- Speaking to Claude via iPhone microphone
+- Hearing Claude's responses via TTS
+- Approving permission prompts by voice (say "yes" or "no")
+
+### Quick Start
+
+Start all voice services with one command:
+```bash
+./start_voice.sh
+```
+
+Then start the voice loop for this session:
+```bash
+.venv/bin/python voice_loop.py --tmux aoe_Voice_mode_73b1e342 > /tmp/voice_loop.log 2>&1 &
+```
+
+Connect from iPhone: **https://voice.drads.app**
+
+### Service Management
+
+**Check service status:**
+```bash
+# All services at once
+curl -s http://localhost:7880/ && echo "LiveKit: OK"
+curl -s http://localhost:8880/health && echo "Kokoro: OK"
+curl -s http://localhost:2022/ && echo "Parakeet: OK"
+curl -s http://localhost:8890/api/sessions && echo "Voice Watcher: OK"
+pgrep -f "voice_loop.py" && echo "Voice Loop: OK"
+pgrep -f "cloudflared" && echo "Cloudflared: OK"
+```
+
+**Start individual services:**
+```bash
+# LiveKit server
+livekit-server --dev --bind 0.0.0.0 > /tmp/livekit.log 2>&1 &
+
+# Kokoro TTS
+uv run voicemode service start kokoro
+
+# Parakeet STT (uses miniconda python)
+/Users/maciej/miniconda3/bin/python parakeet_server.py 2022 > /tmp/parakeet.log 2>&1 &
+
+# Voice Watcher (web UI)
+LIVEKIT_WS_URL="wss://livekit.drads.app" uv run python voice_watcher.py > /tmp/voice_watcher.log 2>&1 &
+
+# Cloudflared tunnel
+cloudflared tunnel run seo-analyser > /tmp/cloudflared.log 2>&1 &
+
+# Voice Loop (connects LiveKit to this session)
+.venv/bin/python voice_loop.py --tmux SESSION_NAME > /tmp/voice_loop.log 2>&1 &
+```
+
+**Restart voice loop (if connection lost):**
+```bash
+pkill -f voice_loop.py
+.venv/bin/python voice_loop.py --tmux aoe_Voice_mode_73b1e342 > /tmp/voice_loop.log 2>&1 &
+```
+
+**Check logs:**
+```bash
+tail -f /tmp/voice_loop.log      # Voice transcriptions
+tail -f /tmp/voice_watcher.log   # Web UI server
+tail -f /tmp/livekit.log         # LiveKit server
+tail -f /tmp/cloudflared.log     # Tunnel status
+```
+
+### Voice Permission Approval
+
+When Claude needs permission for a tool (e.g., Bash command), the system will:
+1. Speak the permission request through iPhone
+2. Wait for your voice response
+3. Approve or deny based on what you say
+
+**To approve:** Say "yes", "tak", "okay", "approve", "dawaj", "dobra"
+**To deny:** Say "no", "nie", "deny", "stop", "cancel"
+
+The hook is configured in `.claude/settings.json` and uses `.claude/hooks/voice-permission.sh`.
+
+### Architecture
+
+```
+iPhone (Safari)
+    ↓ WebRTC audio
+voice.drads.app (Voice Watcher UI)
+    ↓ LiveKit room "voicemode"
+voice_loop.py (receives audio, does STT)
+    ↓ tmux send-keys
+Claude Code session (this conversation)
+    ↓ voicemode converse (TTS)
+LiveKit room "voicemode"
+    ↓ WebRTC audio
+iPhone (hears response)
+```
+
+### Troubleshooting
+
+**No audio from iPhone:**
+- Check if "Click to Talk" is pressed (red button)
+- Verify voice_loop.py is running and sees "iphone-user"
+- Check `tail -f /tmp/voice_loop.log`
+
+**Can't hear TTS responses:**
+- Verify iPhone is connected (green "Connected" status)
+- Check Kokoro is running: `curl http://localhost:8880/health`
+- Test TTS: `uv run voicemode converse -m "Test" --no-wait`
+
+**Permission hook not working:**
+- Check if hook is loaded: `/hooks` command in Claude Code
+- Verify voice_loop.py is running
+- Check `/tmp/voice-permission-hook.log` for details
+
+**Services keep dying:**
+- Run `./start_voice.sh` to restart everything
+- Check individual logs in `/tmp/`
+
 ## Project Overview
 
 VoiceMode is a Python package that provides voice interaction capabilities for AI assistants through the Model Context Protocol (MCP). It enables natural voice conversations with Claude Code and other AI coding assistants by integrating speech-to-text (STT) and text-to-speech (TTS) services.
